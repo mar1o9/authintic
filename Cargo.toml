@@ -23,7 +23,6 @@ axum = "0.8.6"
 log = "0.4.28"
 sea-orm = { version = "1.1.17", features = [ "sqlx-postgres", "sqlx-sqlite", "macros", "runtime-tokio-native-tls"] }
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.145"
 tokio = { version = "1.47.1", features = ["full"] }
 tracing = { version = "0.1.41", features = ["log", "async-await"] }
 tracing-subscriber = "0.3.20"
@@ -31,9 +30,11 @@ validator = { version = "0.20.0", features = ["derive"] }
 axum-extra = { version = "0.10.3", features = ["form"] }
 error-stack = "0.6.0"
 thiserror = "2.0.17"
-jsonwebtoken = "10.0.0"
+jsonwebtoken = { version = "10.0.0", features = ["aws_lc_rs"] }
 uuid = { version = "1.18.1", features = ["v4", "fast-rng"] }
 chrono = "0.4.42"
+dotenv = "0.15.0"
+serde_yaml = "0.9.34"
 
 
 

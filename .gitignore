@@ -1,5 +1,4 @@
 /target
-config.json
-.ignore
+config.yml
 *.env
 *.sqlite

@@ -9,6 +9,9 @@ use serde::Deserialize;
 use tokio::{net::TcpListener, signal};
 use tracing::info;
 
+use crate::controllers::api::create_api_router;
+
+pub mod controllers;
 pub mod entities;
 pub mod utils;
 
@@ -26,6 +29,7 @@ async fn create_router(
     Ok(Router::new()
         .route("/", get(|| async { "Hello 🚀" }))
         .route("/_ping", get(ping_get))
+        .nest("/api", create_api_router(state.clone()))
         .with_state(state))
 }
 

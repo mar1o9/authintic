@@ -27,23 +27,16 @@ pub async fn open_db(
             ))
             .await?;
 
-            let url = format!("{}/{}", db_url, db_name);
-            Database::connect(&url).await?
+            db
         }
         DbBackend::Postgres => {
             db.execute(Statement::from_string(
                 db.get_database_backend(),
-                format!("DROP DATABASE IF EXISTS \"{}\";", db_name),
-            ))
-            .await?;
-            db.execute(Statement::from_string(
-                db.get_database_backend(),
-                format!("CREATE DATABASE \"{}\";", db_name),
+                format!("CREATE DATABASE IF NOT EXISTS `{}`;", db_name),
             ))
             .await?;
 
-            let url = format!("{}/{}", db_url, db_name);
-            Database::connect(&url).await?
+            db
         }
         DbBackend::Sqlite => db,
     };

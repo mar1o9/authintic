@@ -3,19 +3,23 @@ use std::sync::Arc;
 use std::sync::LazyLock;
 
 use axum::{
-    Json, RequestPartsExt, extract::FromRequestParts, extract::State,
-    http::StatusCode, http::request::Parts, response::IntoResponse,
+    Json, RequestPartsExt, extract::FromRequestParts,
+    extract::State, http::StatusCode, http::request::Parts,
+    response::IntoResponse,
 };
 use axum_extra::{
-    TypedHeader, headers::Authorization, headers::authorization::Bearer,
+    TypedHeader, headers::Authorization,
+    headers::authorization::Bearer,
 };
 use bcrypt::{DEFAULT_COST, hash};
 use chrono::{DateTime, Duration, Utc};
 use jsonwebtoken::{
-    Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode,
+    Algorithm, DecodingKey, EncodingKey, Header,
+    Validation, decode, encode,
 };
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait,
+    EntityTrait, QueryFilter,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -24,7 +28,8 @@ use uuid::Uuid;
 use crate::{AppState, entities::users};
 
 static KEYS: LazyLock<Keys> = LazyLock::new(|| {
-    let secret = std::env::var("JWT_SECRET").expect("JWT_SECRET must be set");
+    let secret = std::env::var("JWT_SECRET")
+        .expect("JWT_SECRET must be set");
     Keys::new(secret.as_bytes())
 });
 
@@ -41,12 +46,15 @@ pub async fn jwt_register(
     Json(params): Json<JwtRegisterParams>,
 ) -> Result<Json<AuthBody>, AuthError> {
     // Check if the user sent the credentials
-    if params.email.is_empty() || params.password.is_empty() {
+    if params.email.is_empty() || params.password.is_empty()
+    {
         return Err(AuthError::MissingCredentials);
     }
     let user = users::Entity::find()
         .filter(users::Column::Email.eq(&params.email))
-        .filter(users::Column::Username.eq(&params.username))
+        .filter(
+            users::Column::Username.eq(&params.username),
+        )
         .one(&state.db)
         .await
         .expect("error quering db");
@@ -54,14 +62,15 @@ pub async fn jwt_register(
         return Err(AuthError::UserAlreadyExists);
     }
 
-    let pass_hash = match hash(params.password, DEFAULT_COST) {
-        Ok(pass) => pass,
-        Err(err) => {
-            return Err(AuthError::PasswordHashError {
-                error_message: err.to_string(),
-            });
-        }
-    };
+    let pass_hash =
+        match hash(params.password, DEFAULT_COST) {
+            Ok(pass) => pass,
+            Err(err) => {
+                return Err(AuthError::PasswordHashError {
+                    error_message: err.to_string(),
+                });
+            }
+        };
 
     let user_uuid = Uuid::new_v4();
 
@@ -84,7 +93,10 @@ pub async fn jwt_register(
         }
     };
 
-    let token = match Claims::new(user.pid.to_string(), &KEYS.encoding) {
+    let token = match Claims::new(
+        user.pid.to_string(),
+        &KEYS.encoding,
+    ) {
         Ok(claims) => claims,
         Err(err) => {
             return Err(AuthError::TokenCreation {
@@ -149,12 +161,18 @@ where
             .await
             .map_err(|_| AuthError::InvalidToken)?;
         // Decode the user data
-        let mut validation = Validation::new(Algorithm::RS256);
+        let mut validation =
+            Validation::new(Algorithm::RS256);
         // Customize validation if needed, e.g., for 'iss', 'aud'
-        validation.set_required_spec_claims(&["exp", "subj", "iat"]);
-        let token_data =
-            decode::<Claims>(bearer.token(), &KEYS.decoding, &validation)
-                .map_err(|_| AuthError::InvalidToken)?;
+        validation.set_required_spec_claims(&[
+            "exp", "subj", "iat",
+        ]);
+        let token_data = decode::<Claims>(
+            bearer.token(),
+            &KEYS.decoding,
+            &validation,
+        )
+        .map_err(|_| AuthError::InvalidToken)?;
 
         Ok(token_data.claims)
     }
@@ -189,9 +207,14 @@ pub fn validate_token(
     let decoding_key = DecodingKey::from_secret(secret);
     let mut validation = Validation::new(Algorithm::RS256);
     // Customize validation if needed, e.g., for 'iss', 'aud'
-    validation.set_required_spec_claims(&["exp", "subj", "iat"]);
+    validation
+        .set_required_spec_claims(&["exp", "subj", "iat"]);
 
-    let token_data = decode::<Claims>(token, &decoding_key, &validation)?;
+    let token_data = decode::<Claims>(
+        token,
+        &decoding_key,
+        &validation,
+    )?;
     Ok(token_data.claims)
 }
 #[derive(Debug, thiserror::Error)]
@@ -221,21 +244,24 @@ impl IntoResponse for AuthError {
             AuthError::MissingCredentials => {
                 (StatusCode::BAD_REQUEST, self.to_string())
             }
-            AuthError::TokenCreation { .. } => {
-                (StatusCode::INTERNAL_SERVER_ERROR, self.to_string())
-            }
+            AuthError::TokenCreation { .. } => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                self.to_string(),
+            ),
             AuthError::InvalidToken => {
                 (StatusCode::UNAUTHORIZED, self.to_string())
             }
             AuthError::UserAlreadyExists => {
                 (StatusCode::CONFLICT, self.to_string())
             }
-            AuthError::PasswordHashError { .. } => {
-                (StatusCode::INTERNAL_SERVER_ERROR, self.to_string())
-            }
-            AuthError::ErrorCratingUser { .. } => {
-                (StatusCode::INTERNAL_SERVER_ERROR, self.to_string())
-            }
+            AuthError::PasswordHashError { .. } => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                self.to_string(),
+            ),
+            AuthError::ErrorCratingUser { .. } => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                self.to_string(),
+            ),
         };
         let body = Json(json!({
             "error": error_message,

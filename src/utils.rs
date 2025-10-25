@@ -1,6 +1,6 @@
 use sea_orm::{
-    ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbBackend,
-    DbErr, Statement,
+    ConnectOptions, ConnectionTrait, Database,
+    DatabaseConnection, DbBackend, DbErr, Statement,
 };
 use std::time::Duration;
 
@@ -23,7 +23,10 @@ pub async fn open_db(
         DbBackend::MySql => {
             db.execute(Statement::from_string(
                 db.get_database_backend(),
-                format!("CREATE DATABASE IF NOT EXISTS `{}`;", db_name),
+                format!(
+                    "CREATE DATABASE IF NOT EXISTS `{}`;",
+                    db_name
+                ),
             ))
             .await?;
 
@@ -32,7 +35,10 @@ pub async fn open_db(
         DbBackend::Postgres => {
             db.execute(Statement::from_string(
                 db.get_database_backend(),
-                format!("CREATE DATABASE IF NOT EXISTS `{}`;", db_name),
+                format!(
+                    "CREATE DATABASE IF NOT EXISTS `{}`;",
+                    db_name
+                ),
             ))
             .await?;
 

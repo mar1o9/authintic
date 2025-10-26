@@ -3,9 +3,10 @@ members = [".", "migration"]
 
 
 [package]
-name = "voice"
+name = "authintic"
 version = "0.1.0"
 edition = "2024"
+authers = ["mar1o9"]
 
 # Enable more optimization in the release profile at the cost of compile time.
 [profile.release]

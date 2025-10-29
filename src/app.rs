@@ -1,7 +1,30 @@
+use axum::Router;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use std::{error, time::Duration};
 
 use crate::Config;
+
+#[derive(Debug)]
+pub struct App;
+impl App {
+    pub async fn serve(
+        app: Router,
+        host: String,
+        port: i32,
+    ) -> Result<(), Box<dyn error::Error>> {
+        let listener = tokio::net::TcpListener::bind(
+            &format!("{}:{}", host, port),
+        )
+        .await?;
+
+        tracing::info!("listing on port {}", port);
+        axum::serve(listener, app)
+            .with_graceful_shutdown(shutdown_signal())
+            .await?;
+
+        Ok(())
+    }
+}
 
 #[derive(Debug)]
 pub struct AppContext {
@@ -10,6 +33,15 @@ pub struct AppContext {
 }
 
 impl AppContext {
+    ///Create's a AppContext instanse or panics
+    pub async fn new() -> Self {
+        let mut ctx = AppContext {
+            config: Config::new("config.yml").unwrap(),
+            db: DatabaseConnection::Disconnected,
+        };
+        ctx.open_db_connection().await.unwrap();
+        ctx
+    }
     pub async fn open_db_connection(
         &mut self
     ) -> Result<(), Box<dyn error::Error>> {
@@ -39,5 +71,32 @@ impl AppContext {
         }
         self.db = Database::connect(opt).await?;
         Ok(())
+    }
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    use tokio::signal;
+    let terminate = async {
+        signal::unix::signal(
+            signal::unix::SignalKind::terminate(),
+        )
+        .expect("failed to install signal handler")
+        .recv()
+        .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
     }
 }

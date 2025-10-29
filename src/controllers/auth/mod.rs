@@ -6,15 +6,15 @@ use axum::{
 };
 
 use crate::{
+    app::AppContext,
     controllers::auth::jwt::{jwt_login, jwt_register},
-    AppState,
 };
 
 pub mod jwt;
 
 pub fn create_auth_router(
-    state: Arc<AppState>
-) -> Router<Arc<AppState>> {
+    state: Arc<AppContext>
+) -> Router<Arc<AppContext>> {
     Router::new()
         .route("/jwt/register", post(jwt_register))
         .route("/jwt/login", post(jwt_login))

@@ -4,3 +4,4 @@ indent_style = "Block"
 reorder_imports = false
 fn_args_layout = "Vertical"
 fn_params_layout = "Vertical"
+merge_derives = false

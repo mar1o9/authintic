@@ -3,12 +3,12 @@ use std::sync::Arc;
 use axum::Router;
 
 use crate::{
-    AppState, controllers::auth::create_auth_router,
+    app::AppContext, controllers::auth::create_auth_router,
 };
 
 pub fn create_api_router(
-    state: Arc<AppState>,
-) -> Router<Arc<AppState>> {
+    state: Arc<AppContext>
+) -> Router<Arc<AppContext>> {
     Router::new()
         .with_state(state.clone())
         .nest("/auth", create_auth_router(state))

@@ -26,7 +26,7 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::{AppState, entities::user};
+use crate::{app::AppContext, entities::user};
 
 static KEYS: LazyLock<Keys> = LazyLock::new(|| {
     let secret = env::var("JWT_SECRET").unwrap();
@@ -252,7 +252,7 @@ impl IntoResponse for AuthError {
 }
 
 pub async fn jwt_register(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<AppContext>>,
     Json(params): Json<JwtAuthParams>,
 ) -> Result<(StatusCode, Json<AuthBody>), AuthError> {
     // Check if the user sent the credentials
@@ -364,7 +364,7 @@ pub async fn jwt_register(
 }
 
 pub async fn jwt_login(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<AppContext>>,
     Json(params): Json<JwtAuthParams>,
 ) -> Result<(StatusCode, Json<AuthBody>), AuthError> {
     // Check credentials
@@ -437,6 +437,7 @@ pub async fn jwt_login(
     // Send the authorized token
     Ok((StatusCode::OK, Json(AuthBody::new(token))))
 }
+
 #[cfg(test)]
 mod test {
     use super::*;

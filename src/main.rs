@@ -1,11 +1,13 @@
 use authintic::{
     app::{App, AppContext},
+    bgworker::{worker_manager, Job},
     controllers::api::create_api_router,
 };
 use axum::{
     Router, extract::State, response::IntoResponse,
     routing::get,
 };
+use tokio::sync::mpsc;
 use std::{error, sync::Arc};
 
 use dotenv::dotenv;
@@ -36,7 +38,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = dotenv().unwrap();
     tracing_subscriber::fmt().init();
 
-    let ctx = AppContext::new().await;
+    let mut ctx = AppContext::new().await;
+    // start the background Worker
+    let (tx, rx) = mpsc::channel::<Job>(100);
+    tokio::spawn(worker_manager(rx));
+    ctx.tx = Some(tx);
     let con = ctx.config.clone();
 
     let app = create_router(ctx).await?;

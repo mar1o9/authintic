@@ -1,5 +1,5 @@
 /target
-config.yml
+*/development.yml
 *.env
 *.sqlite
 keys/

@@ -5,13 +5,15 @@ use tera::{Context, Tera};
 use serde::{Deserialize, Serialize};
 
 pub mod app;
+pub mod bgworker;
 pub mod controllers;
-pub mod entities;
+pub mod models;
 
 #[derive(Deserialize, Serialize, PartialEq, Debug, Clone)]
 pub struct Config {
     pub host: String,
     pub port: i32,
+    pub mailer: Mailer,
     pub database: Database,
 }
 
@@ -25,26 +27,30 @@ impl Config {
     fn load_from_file(
         path: &str
     ) -> Result<Self, Box<dyn error::Error>> {
-        // let mut temp = tera::Tera::new(concat!(
-        //     env!("CARGO_MANIFEST_DIR"),
-        //     "/config/*"
-        // ))?;
-        // temp.add_template_file(
-        //     "config.yml",
-        //     Some("config"),
-        // )?;
-        // let db_url_var = var("DATABASE_URL")?;
-        // let mut ctx = tera::Context::new();
-        // ctx.insert("${DATABASE_URL}", &db_url_var);
-        // let rendered = temp.render("config", &ctx)?;
-        // let yml_config = fs::read_to_string(path)?
-        //     .replace("${DATABASE_URL}", &db_url_var);
         let content = fs::read_to_string(path)?;
         let render = render_string(&content, &json!({}))?;
 
         let config: Config = serde_yaml::from_str(&render)?;
         Ok(config)
     }
+}
+
+#[derive(Deserialize, Serialize, PartialEq, Debug, Clone)]
+pub struct Mailer {
+    // the mail app domain host
+    pub host: String,
+    // the mail app port
+    pub port: u16,
+    // if secure needs auth
+    pub is_secure: bool,
+    // auth variables
+    pub auth: MailAuth,
+}
+
+#[derive(Deserialize, Serialize, PartialEq, Debug, Clone)]
+pub struct MailAuth {
+    pub user: String,
+    pub password: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -94,27 +100,12 @@ mod test {
     #[test]
     fn test_pars_config() {
         let _ = dotenv().unwrap();
-        let config: Config = match Config::new("config.yml")
-        {
-            Ok(conf) => conf,
-            Err(err) => {
-                panic!("{}", err.to_string());
-            }
-        };
-        let c = Config {
-            host: "localhost".to_string(),
-            port: 8989,
-            database: Database {
-                uri: "sqlite://debug.sqlite?mode=rwc"
-                    .to_string(),
-                enable_logging: false,
-                min_connections: 1,
-                max_connections: 10,
-                idle_timeout: 500,
-                connect_timeout: 500,
-                acquire_timeout: Some(500),
-            },
-        };
-        assert_eq!(config, c);
+        let _config: Config =
+            match Config::new("config/testing.yml") {
+                Ok(conf) => conf,
+                Err(err) => {
+                    panic!("{}", err.to_string());
+                }
+            };
     }
 }

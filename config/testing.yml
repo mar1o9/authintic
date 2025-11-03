@@ -1,0 +1,33 @@
+host: localhost
+port: 8989
+
+# Mailer Configuration.
+mailer:
+  # SMTP server host. e.x localhost, smtp.gmail.com
+  host: localhost
+  # SMTP server port
+  port: 1025
+  # Use secure connection (SSL/TLS).
+  secure: false
+  auth:
+    user: support@authintic.com
+    password: superdobersecretpassword
+  # Override the SMTP hello name (default is the machine's hostname)
+  # hello_name:
+
+# Database Configuration
+database:
+  # Database connection URI
+  uri: {{ get_env(name="DATABASE_URL", default="sqlite://debug.sqlite?mode=rwc")}}
+  # When enabled, the sql query will be logged.
+  enable_logging: false
+  # Set the timeout duration when acquiring a connection.
+  connect_timeout: {{ get_env(name="DB_CONNECT_TIMEOUT", default="500") }}
+  # Set the idle duration before closing a connection.
+  idle_timeout: {{ get_env(name="DB_IDLE_TIMEOUT", default="500") }}
+  # Minimum number of connections for a pool.
+  min_connections: {{ get_env(name="DB_MIN_CONNECTIONS", default="1") }}
+  # Maximum number of connections for a pool.
+  max_connections: {{ get_env(name="DB_MAX_CONNECTIONS", default="10") }}
+  # Acquire timeout
+  acquire_timeout: {{ get_env(name="DB_ACQUIRE_TIMEOUT", default="500") }}

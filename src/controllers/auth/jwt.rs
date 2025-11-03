@@ -4,34 +4,175 @@ use std::{
 };
 
 use axum::{
-    Json, RequestPartsExt, extract::FromRequestParts,
-    extract::State, http::StatusCode, http::request::Parts,
+    extract::{FromRequestParts, State},
+    http::{request::Parts, StatusCode},
     response::IntoResponse,
+    Json, RequestPartsExt,
 };
 use axum_extra::{
     TypedHeader, headers::Authorization,
     headers::authorization::Bearer,
 };
-use bcrypt::{DEFAULT_COST, hash};
 use chrono::{DateTime, Duration, Utc};
 use jsonwebtoken::{
     Algorithm, DecodingKey, EncodingKey, Header,
     Validation, decode, encode,
 };
-use regex::Regex;
-use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait,
-    EntityTrait, QueryFilter,
-};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 
-use crate::{app::AppContext, entities::user};
+use crate::{
+    app::AppContext,
+    bgworker::{Creds, Email, Job},
+    models::{
+        entities::user,
+        user::{LoginParams, RegisterParams},
+    },
+};
 
 static KEYS: LazyLock<Keys> = LazyLock::new(|| {
     let secret = env::var("JWT_SECRET").unwrap();
     Keys::new(secret.as_bytes())
 });
+
+pub async fn jwt_register(
+    State(ctx): State<Arc<AppContext>>,
+    Json(params): Json<RegisterParams>,
+) -> Result<
+    (StatusCode, Json<Value>),
+    (StatusCode, AuthError),
+> {
+    if !user::Model::validate_credentials(
+        &params.email,
+        &params.password,
+    ) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            AuthError::WrongCredentials,
+        ));
+    }
+    let res =
+        user::Model::create_with_password(&ctx.db, &params)
+            .await;
+
+    match res {
+        Ok(_user) => {
+            tracing::info!("success!");
+            let Some(tx) = &ctx.tx else {
+                tracing::error!("the sender is None :()");
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    AuthError::UnAbleToSendMail,
+                ));
+            };
+
+            match tx
+                .send(Job::SendEmail {
+                    email: Email {
+                        from: Some("".to_string()),
+                        to: _user.email,
+                        reply_to: None,
+                        subject: "Email Verification"
+                            .to_string(),
+                        html: "".to_string(),
+                        ..Default::default()
+                    },
+                    creds: Creds {
+                        user: ctx
+                            .config
+                            .mailer
+                            .auth
+                            .user
+                            .clone(),
+                        password: ctx
+                            .config
+                            .mailer
+                            .auth
+                            .password
+                            .clone(),
+                    },
+                    relay: ctx.config.mailer.host.clone(),
+                })
+                .await
+            {
+                Ok(_) => tracing::info!(
+                    "mail passed to bgworker"
+                ),
+                Err(_) => {
+                    return Err((
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        AuthError::UnAbleToSendMail,
+                    ));
+                }
+            };
+
+            return Ok((
+                StatusCode::CREATED,
+                Json(json!({})),
+            ));
+        }
+        Err(err) => {
+            tracing::info!(
+                message = err.to_string(),
+                user_email = &params.email,
+                "could not register user",
+            );
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                AuthError::ErrorCratingUser {
+                    error_message: err.to_string(),
+                },
+            ));
+        }
+    };
+}
+
+pub async fn jwt_login(
+    State(ctx): State<Arc<AppContext>>,
+    Json(params): Json<LoginParams>,
+) -> Result<(StatusCode, Json<AuthBody>), AuthError> {
+    // Check credentials
+    if !user::Model::validate_credentials(
+        &params.email,
+        &params.password,
+    ) {
+        return Err(AuthError::WrongCredentials);
+    }
+
+    let Ok(user) =
+        user::Model::find_by_email(&ctx.db, &params.email)
+            .await
+    else {
+        tracing::debug!(
+            email = params.email,
+            "login attempt with non-existent email"
+        );
+        return Err(AuthError::WrongCredentials);
+    };
+
+    let valid = user.verify_password(&params.password);
+
+    if !valid {
+        return Err(AuthError::UnAuthrized);
+    }
+
+    let token =
+        match Claims::new(user.username, &KEYS.encoding) {
+            Ok(claims) => claims,
+            Err(err) => {
+                tracing::error!(
+                    "error: {}",
+                    err.to_string()
+                );
+                return Err(AuthError::TokenCreation {
+                    error_message: err.to_string(),
+                });
+            }
+        };
+    tracing::info!("success!");
+    // Send the authorized token
+    Ok((StatusCode::OK, Json(AuthBody::new(token))))
+}
 
 struct Keys {
     encoding: EncodingKey,
@@ -44,45 +185,6 @@ impl Keys {
             encoding: EncodingKey::from_secret(secret),
             decoding: DecodingKey::from_secret(secret),
         }
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct JwtAuthParams {
-    pub email: String,
-    pub username: String,
-    pub password: String,
-}
-
-impl JwtAuthParams {
-    fn validate_email_string(
-        &self
-    ) -> Result<bool, Box<dyn std::error::Error>> {
-        let re = Regex::new(
-            r"\w+([-+.']\w+)*@\w+([-.]\w+)*\.\w+([-.]\w+)*",
-        )?;
-
-        Ok(re.is_match(&self.email))
-    }
-    fn validate_password_string(
-        &self
-    ) -> Result<bool, Box<dyn std::error::Error>> {
-        let is_len_ok = self.password.len() >= 8
-            && self.password.len() <= 32;
-        let has_lower =
-            Regex::new(r"[a-z]")?.is_match(&self.password);
-        let has_upper =
-            Regex::new(r"[A-Z]")?.is_match(&self.password);
-        let has_digit =
-            Regex::new(r"\d")?.is_match(&self.password);
-        let has_symbol = Regex::new(r"[@$!%*?&]")?
-            .is_match(&self.password);
-
-        Ok(is_len_ok
-            && has_lower
-            && has_upper
-            && has_digit
-            && has_symbol)
     }
 }
 
@@ -163,24 +265,7 @@ where
     }
 }
 
-pub fn validate_token(
-    token: &str,
-    secret: &[u8],
-) -> Result<Claims, jsonwebtoken::errors::Error> {
-    let decoding_key = DecodingKey::from_secret(secret);
-    let mut validation = Validation::new(Algorithm::RS256);
-    // Customize validation if needed, e.g., for 'iss', 'aud'
-    validation
-        .set_required_spec_claims(&["exp", "subj", "iat"]);
-
-    let token_data = decode::<Claims>(
-        token,
-        &decoding_key,
-        &validation,
-    )?;
-    Ok(token_data.claims)
-}
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Serialize, Deserialize)]
 pub enum AuthError {
     #[error("wrong credentials")]
     WrongCredentials,
@@ -202,295 +287,14 @@ pub enum AuthError {
     FaildToValidateParameters { error_message: String },
     #[error("invalid parameter {error_message}")]
     InvalidParam { error_message: String },
+    #[error("Un authrized to accsess this account")]
+    UnAuthrized,
+    #[error("Un able to send mail contact support")]
+    UnAbleToSendMail,
 }
 
 impl IntoResponse for AuthError {
     fn into_response(self) -> axum::response::Response {
-        let (status, error_message) = match self {
-            AuthError::WrongCredentials => {
-                (StatusCode::UNAUTHORIZED, self.to_string())
-            }
-            AuthError::MissingCredentials => {
-                (StatusCode::BAD_REQUEST, self.to_string())
-            }
-            AuthError::TokenCreation { .. } => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                self.to_string(),
-            ),
-            AuthError::InvalidToken => {
-                (StatusCode::UNAUTHORIZED, self.to_string())
-            }
-            AuthError::UserAlreadyExists { .. } => {
-                (StatusCode::CONFLICT, self.to_string())
-            }
-            AuthError::PasswordHashError { .. } => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                self.to_string(),
-            ),
-            AuthError::ErrorCratingUser { .. } => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                self.to_string(),
-            ),
-            AuthError::FaildToValidateParameters {
-                ..
-            } => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                self.to_string(),
-            ),
-            AuthError::InvalidParam { .. } => {
-                (StatusCode::BAD_REQUEST, self.to_string())
-            }
-            AuthError::UserDoseNotExists { .. } => {
-                (StatusCode::NOT_FOUND, self.to_string())
-            }
-        };
-        let body = Json(json!({
-            "error": error_message,
-        }));
-        (status, body).into_response()
-    }
-}
-
-pub async fn jwt_register(
-    State(state): State<Arc<AppContext>>,
-    Json(params): Json<JwtAuthParams>,
-) -> Result<(StatusCode, Json<AuthBody>), AuthError> {
-    // Check if the user sent the credentials
-    let is_valid_email_string =
-        match params.validate_email_string() {
-            Ok(is_valid) => is_valid,
-            Err(err) => {
-                return Err(
-                    AuthError::FaildToValidateParameters {
-                        error_message: err.to_string(),
-                    },
-                );
-            }
-        };
-    let is_valid_password_string =
-        match params.validate_password_string() {
-            Ok(is_valid) => is_valid,
-            Err(err) => {
-                return Err(
-                    AuthError::FaildToValidateParameters {
-                        error_message: err.to_string(),
-                    },
-                );
-            }
-        };
-    if !is_valid_email_string {
-        return Err(AuthError::InvalidParam {
-            error_message: "Invalid email format"
-                .to_string(),
-        });
-    }
-    if !is_valid_password_string {
-        return Err(AuthError::InvalidParam {
-            error_message: "Invalid password format"
-                .to_string(),
-        });
-    }
-    // check if a user with the same email or username exists
-    let user = user::Entity::find()
-        .filter(user::Column::Email.eq(&params.email))
-        .filter(user::Column::Username.eq(&params.username))
-        .one(&state.db)
-        .await
-        .expect("faild querying the database");
-    match user {
-        Some(user) => {
-            if user.username == params.username {
-                return Err(AuthError::UserAlreadyExists {
-                           error_message:
-                               "user with this username already exists"
-                                   .to_string(),
-                       });
-            } else if user.email == params.email {
-                return Err(AuthError::UserAlreadyExists {
-                           error_message:
-                               "user with this email already exists"
-                                   .to_string(),
-                       });
-            }
-        }
-        None => {}
-    }
-
-    let pass_hash =
-        match hash(params.password, DEFAULT_COST) {
-            Ok(pass) => pass,
-            Err(err) => {
-                return Err(AuthError::PasswordHashError {
-                    error_message: err.to_string(),
-                });
-            }
-        };
-
-    let user = user::ActiveModel {
-        username: Set(params.username),
-        email: Set(params.email),
-        password: Set(pass_hash),
-        ..Default::default()
-    }
-    .insert(&state.db)
-    .await;
-    let user = match user {
-        Ok(user) => user,
-        Err(err) => {
-            tracing::error!("error: {}", err.to_string());
-            return Err(AuthError::ErrorCratingUser {
-                error_message: err.to_string(),
-            });
-        }
-    };
-
-    let token =
-        match Claims::new(user.username, &KEYS.encoding) {
-            Ok(claims) => claims,
-            Err(err) => {
-                tracing::error!(
-                    "error: {}",
-                    err.to_string()
-                );
-                return Err(AuthError::TokenCreation {
-                    error_message: err.to_string(),
-                });
-            }
-        };
-
-    tracing::info!("success!");
-    // Send the authorized token
-    Ok((StatusCode::CREATED, Json(AuthBody::new(token))))
-}
-
-pub async fn jwt_login(
-    State(state): State<Arc<AppContext>>,
-    Json(params): Json<JwtAuthParams>,
-) -> Result<(StatusCode, Json<AuthBody>), AuthError> {
-    // Check credentials
-    let is_valid_email_string =
-        match params.validate_email_string() {
-            Ok(is_valid) => is_valid,
-            Err(err) => {
-                return Err(
-                    AuthError::FaildToValidateParameters {
-                        error_message: err.to_string(),
-                    },
-                );
-            }
-        };
-    let is_valid_password_string =
-        match params.validate_password_string() {
-            Ok(is_valid) => is_valid,
-            Err(err) => {
-                return Err(
-                    AuthError::FaildToValidateParameters {
-                        error_message: err.to_string(),
-                    },
-                );
-            }
-        };
-    if !is_valid_email_string {
-        return Err(AuthError::InvalidParam {
-            error_message: "Invalid email format"
-                .to_string(),
-        });
-    }
-    if !is_valid_password_string {
-        return Err(AuthError::InvalidParam {
-            error_message: "Invalid password format"
-                .to_string(),
-        });
-    }
-
-    // check if a user with the same email or username exists
-    let user = user::Entity::find()
-        .filter(user::Column::Email.eq(&params.email))
-        .filter(user::Column::Username.eq(&params.username))
-        .one(&state.db)
-        .await
-        .expect("faild querying the database");
-    let user = match user {
-        Some(user) => user,
-        None => {
-            return Err(AuthError::UserDoseNotExists {
-                error_message: "couldn't find this user"
-                    .to_string(),
-            });
-        }
-    };
-
-    let token =
-        match Claims::new(user.username, &KEYS.encoding) {
-            Ok(claims) => claims,
-            Err(err) => {
-                tracing::error!(
-                    "error: {}",
-                    err.to_string()
-                );
-                return Err(AuthError::TokenCreation {
-                    error_message: err.to_string(),
-                });
-            }
-        };
-    tracing::info!("success!");
-    // Send the authorized token
-    Ok((StatusCode::OK, Json(AuthBody::new(token))))
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn test_valid_email_string() {
-        let params = JwtAuthParams {
-            email: "user@email.com".to_string(),
-            username: "user_name".to_string(),
-            password: "Password@1".to_string(),
-        };
-        let is_valid_email_string =
-            params.validate_email_string().unwrap();
-        assert_eq!(is_valid_email_string, true);
-    }
-    #[test]
-    fn test_invalid_email_string() {
-        let params = JwtAuthParams {
-            email: "useremailcom".to_string(),
-            username: "user_name".to_string(),
-            password: "Password@1".to_string(),
-        };
-        let is_valid_email_string =
-            params.validate_email_string().unwrap();
-        assert_eq!(is_valid_email_string, false);
-    }
-
-    #[test]
-    fn test_valid_password_string() {
-        let params = JwtAuthParams {
-            email: "user@email.com".to_string(),
-            username: "user_name".to_string(),
-            password: "Password@1".to_string(),
-        };
-        let is_valid_password_string =
-            match params.validate_password_string() {
-                Ok(is_valid) => is_valid,
-                Err(err) => panic!("{}", err.to_string()),
-            };
-        assert_eq!(is_valid_password_string, true);
-    }
-    #[test]
-    fn test_invalid_password_string() {
-        let params = JwtAuthParams {
-            email: "user@email.com".to_string(),
-            username: "user_name".to_string(),
-            password: "short1".to_string(),
-        };
-        let is_valid_password_string =
-            match params.validate_password_string() {
-                Ok(is_valid) => is_valid,
-                Err(err) => panic!("{}", err.to_string()),
-            };
-        assert_eq!(is_valid_password_string, false);
+        self.to_string().into_response()
     }
 }

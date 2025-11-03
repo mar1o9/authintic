@@ -1,7 +1,9 @@
 use axum::Router;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
+use tokio::sync::mpsc::Sender;
 use std::{error, time::Duration};
 
+use crate::bgworker::Job;
 use crate::Config;
 
 #[derive(Debug)]
@@ -30,6 +32,7 @@ impl App {
 pub struct AppContext {
     pub config: Config,
     pub db: DatabaseConnection,
+    pub tx: Option<Sender<Job>>,
 }
 
 impl AppContext {
@@ -38,6 +41,7 @@ impl AppContext {
         let mut ctx = AppContext {
             config: Config::new("config.yml").unwrap(),
             db: DatabaseConnection::Disconnected,
+            tx: None,
         };
         ctx.open_db_connection().await.unwrap();
         ctx
